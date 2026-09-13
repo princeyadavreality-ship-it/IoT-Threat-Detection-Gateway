@@ -1,0 +1,54 @@
+name: CI - Build & Test
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  frontend-build:
+    name: Frontend Lint & Build (React/TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Run Type Check & Lint
+        run: npm run lint
+
+      - name: Build Production Assets
+        run: npm run build
+
+  backend-python-check:
+    name: Python IoT Gateway Simulation & Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          cd iot_gateway
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Gateway Simulation Test
+        run: |
+          cd iot_gateway
+          python main.py

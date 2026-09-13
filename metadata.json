@@ -1,0 +1,7 @@
+{
+  "name": "IoT Threat Detection Gateway",
+  "description": "Real-time network security monitoring tool for IoT devices, detecting cyber threats, enforcing automated isolation policies, and inspecting network telemetry.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
