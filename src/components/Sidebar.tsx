@@ -12,10 +12,11 @@ import {
   Server,
   Network,
   Lock,
-  CpuIcon
+  CpuIcon,
+  Clock
 } from 'lucide-react';
 
-export type NavTab = 'radar' | 'overview' | 'alerts' | 'devices' | 'blocklist' | 'traffic' | 'topology' | 'settings' | 'python';
+export type NavTab = 'radar' | 'overview' | 'baseline' | 'alerts' | 'devices' | 'blocklist' | 'traffic' | 'topology' | 'settings' | 'python';
 
 interface SidebarProps {
   currentTab: NavTab;
@@ -25,6 +26,7 @@ interface SidebarProps {
   deviceCount: number;
   isSimulating: boolean;
   onOpenAttackDrawer: () => void;
+  mitigatedCount?: number;
   theme?: 'dark' | 'light';
 }
 
@@ -36,6 +38,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   deviceCount,
   isSimulating,
   onOpenAttackDrawer,
+  mitigatedCount = 0,
   theme = 'dark',
 }) => {
   const isDark = theme === 'dark';
@@ -64,6 +67,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           id: 'overview', 
           label: 'Security Overview', 
           icon: Layers 
+        },
+        { 
+          id: 'baseline', 
+          label: 'Adaptive Baseline', 
+          icon: Clock,
+          badge: mitigatedCount > 0 ? `${mitigatedCount} AVERTED` : 'ACTIVE',
+          badgeVariant: 'success'
         },
         { 
           id: 'alerts', 

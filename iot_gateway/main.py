@@ -141,13 +141,45 @@ def run_full_simulation_demo():
         print(f"   >>> Windows: {action.windows_command}")
         print(f"   >>> Linux:   {action.iptables_command}")
 
+    # 7. Adaptive Baseline & Maintenance Window Demonstration
+    print("\n" + "-"*75)
+    print("[PHASE 7] Demonstrating 'Adaptive Baseline' Heuristic (Maintenance Window)...")
+    print("Scenario: Scheduled 02:00 - 05:00 maintenance window initiates automated 37.5 KB")
+    print("          OTA firmware sync on Camera (192.168.1.10) & 17-port LAN asset scan.")
+    print("Under static rules: VOLUME_FLOOD & PORT_SCAN false alarms would quarantine the camera!")
+    print("-"*75)
+
+    # Configure engine clock to simulated 03:00 AM (Maintenance Window)
+    detection_engine.adaptive_config.enabled = True
+    detection_engine.adaptive_config.simulated_hour = 3.0
+    regime, multiplier, desc = detection_engine.get_current_regime()
+    print(f">> Current Operational Regime: {regime} (Sensitivity Scaled: {multiplier}x tolerance)")
+    print(f">> Policy: {desc}")
+
+    # Inject maintenance firmware sync (37.5 KB) and asset scan (17 ports)
+    maint_pkts_a = simulator.inject_maintenance_routine(target_ip="192.168.1.10", routine_type="firmware_sync")
+    maint_pkts_b = simulator.inject_maintenance_routine(target_ip="192.168.1.10", routine_type="asset_discovery_scan")
+    print(f">> Injected {len(maint_pkts_a)} OTA firmware chunks (37.5 KB) and {len(maint_pkts_b)} inventory scan probes.")
+
+    maint_alerts = detection_engine.analyze_packets(simulator.packet_buffer)
+    if not maint_alerts:
+        print("\n✅ SUCCESS: Zero false positives triggered! Adaptive Baseline absorbed maintenance bursts.")
+        for se in detection_engine.suppressed_false_positives:
+            print(f"   🛡️ Suppressed [{se.category}] on {se.target_ip}: {se.metric_value:,} units "
+                  f"(Static limit: {se.static_threshold:,} -> Adaptive limit: {se.adaptive_threshold:,})")
+            print(f"      Reason: {se.reason}")
+    else:
+        for alt in maint_alerts:
+            print(f"   ⚠️ Alert: {alt.category} on {alt.target_ip}")
+
     # Summary
     print("\n" + "="*75)
     print("📊 GATEWAY SUMMARY LEDGER")
     print("="*75)
     print(f"Total Packets/Events Processed: {len(simulator.packet_buffer)}")
     print(f"Total Alerts Flagged:           {len(detection_engine.alerts)}")
-    print(f"Categories Verified:            5 (Port Scan, Brute-Force, C2, Flood, USB DLP)")
+    print(f"False Positives Mitigated:      {len(detection_engine.suppressed_false_positives)} (Via Adaptive Baseline Heuristic)")
+    print(f"Active Operational Regime:      {regime} ({multiplier}x dynamic factor)")
     print(f"Active Blocklisted Hosts:       {list(response_engine.blocklist)}")
     print(f"Safety Mode:                    {'ON (Safe simulation)' if response_engine.safety_mode else 'OFF (Live execution)'}")
     print("="*75)

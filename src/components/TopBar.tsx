@@ -12,7 +12,8 @@ import {
   Moon,
   Crosshair,
   Shield,
-  Activity
+  Activity,
+  Clock
 } from 'lucide-react';
 
 interface TopBarProps {
@@ -32,6 +33,9 @@ interface TopBarProps {
   theme?: 'dark' | 'light';
   onToggleTheme?: () => void;
   onOpenAttackDrawer?: () => void;
+  adaptiveRegime?: string;
+  adaptiveMultiplier?: number;
+  onOpenBaseline?: () => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -51,6 +55,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   theme = 'dark',
   onToggleTheme,
   onOpenAttackDrawer,
+  adaptiveRegime,
+  adaptiveMultiplier,
+  onOpenBaseline,
 }) => {
   const [secondsUntilRefresh, setSecondsUntilRefresh] = useState<number>(2);
 
@@ -141,6 +148,27 @@ export const TopBar: React.FC<TopBarProps> = ({
           <Wifi className="w-3.5 h-3.5 text-blue-500" />
           <span className="font-medium">{deviceCount} Managed IoT Nodes</span>
         </div>
+
+        {/* Adaptive Baseline Regime Status Badge */}
+        {adaptiveRegime && (
+          <button
+            onClick={onOpenBaseline}
+            className={`hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-mono transition-all cursor-pointer ${
+              adaptiveRegime === 'MAINTENANCE_WINDOW'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                : adaptiveRegime === 'OFF_PEAK'
+                ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/20'
+                : 'bg-blue-500/10 text-blue-400 border-blue-500/30 hover:bg-blue-500/20'
+            }`}
+            title="Current Diurnal Operational Regime - Click to inspect Adaptive Baseline"
+          >
+            <Clock className="w-3.5 h-3.5" />
+            <span className="font-medium">
+              {adaptiveRegime === 'MAINTENANCE_WINDOW' ? 'Maint. Window' : adaptiveRegime === 'OFF_PEAK' ? 'Off-Peak' : 'Peak Hours'}
+            </span>
+            <span className="font-bold opacity-80">({adaptiveMultiplier?.toFixed(1) || '1.0'}x)</span>
+          </button>
+        )}
       </div>
 
       {/* Right: Operational Controls & Tools */}

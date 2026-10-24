@@ -80,3 +80,33 @@ export interface DetectionThresholds {
   usbExfiltrationBytes: number;
   usbExfiltrationWindowSec: number;
 }
+
+export type OperationalRegime = 'PEAK_HOURS' | 'OFF_PEAK' | 'MAINTENANCE_WINDOW';
+
+export interface AdaptiveBaselineConfig {
+  enabled: boolean;
+  maintenanceStartHour: number; // e.g. 2 (02:00)
+  maintenanceEndHour: number;   // e.g. 5 (05:00)
+  maintenanceFactor: number;    // e.g. 2.2x
+  offpeakFactor: number;        // e.g. 1.3x
+  mode: 'AUTO_CLOCK' | 'MANUAL_SIMULATED';
+  simulatedHour: number;        // 0.0 - 23.99
+  autoSuppressMaintenanceSpikes: boolean;
+}
+
+export interface SuppressedFalsePositive {
+  id: string;
+  timestamp: number;
+  category: AlertCategory;
+  sourceIp: string;
+  targetIp: string;
+  rawMetric: number;
+  metricUnit: string;
+  staticThreshold: number;
+  adaptiveThreshold: number;
+  regime: OperationalRegime;
+  multiplier: number;
+  reason: string;
+  preventedAction: string;
+}
+

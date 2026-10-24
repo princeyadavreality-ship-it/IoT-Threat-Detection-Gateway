@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Sliders, Check, RotateCcw, ShieldCheck, Volume2, VolumeX, Play, MessageSquare, Radio, Shield } from 'lucide-react';
-import { DetectionThresholds } from '../types';
+import { Sliders, Check, RotateCcw, ShieldCheck, Volume2, VolumeX, Play, MessageSquare, Radio, Shield, Clock, Zap } from 'lucide-react';
+import { DetectionThresholds, AdaptiveBaselineConfig } from '../types';
 import { DEFAULT_THRESHOLDS } from '../data/mockData';
 import { speechEngine, SpeechSettings } from '../utils/speechNotification';
 
@@ -11,6 +11,8 @@ interface SettingsPanelProps {
   onToggleSafety: () => void;
   ttsEnabled: boolean;
   onToggleTts: () => void;
+  adaptiveConfig?: AdaptiveBaselineConfig;
+  onUpdateAdaptiveConfig?: (config: AdaptiveBaselineConfig) => void;
   theme?: 'dark' | 'light';
 }
 
@@ -21,6 +23,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onToggleSafety,
   ttsEnabled,
   onToggleTts,
+  adaptiveConfig,
+  onUpdateAdaptiveConfig,
   theme = 'dark',
 }) => {
   const [formData, setFormData] = useState<DetectionThresholds>(thresholds);
@@ -100,6 +104,106 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Adaptive Baseline Heuristic Card */}
+      {adaptiveConfig && onUpdateAdaptiveConfig && (
+        <div className={`border rounded-xl p-4 lg:p-5 transition-colors ${
+          isDark ? 'bg-[#0F1522] border-[#1C2538]' : 'bg-white border-slate-200 shadow-xs'
+        }`}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-inherit">
+            <div>
+              <div className="text-sm font-display font-bold flex items-center gap-2">
+                <Clock className="w-4 h-4 text-emerald-400" />
+                <span>Adaptive Baseline: Diurnal Scheduling &amp; Maintenance Tolerance</span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1 max-w-xl font-sans">
+                Automatically modulates alert sensitivity based on time of day. Relaxes volume flood and port scan thresholds during scheduled maintenance windows to prevent false positive device isolations.
+              </p>
+            </div>
+
+            <button
+              onClick={() => onUpdateAdaptiveConfig({ ...adaptiveConfig, enabled: !adaptiveConfig.enabled })}
+              className={`px-3.5 py-2 rounded-lg font-mono text-xs font-bold border transition-all cursor-pointer whitespace-nowrap ${
+                adaptiveConfig.enabled
+                  ? isDark
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                    : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                  : isDark
+                    ? 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+                    : 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200'
+              }`}
+            >
+              {adaptiveConfig.enabled ? 'HEURISTIC: ACTIVE' : 'HEURISTIC: DISABLED'}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 pt-3">
+            <div>
+              <label className="text-slate-400 text-[10px] block mb-1 font-mono uppercase">
+                MAINTENANCE WINDOW START
+              </label>
+              <select
+                value={adaptiveConfig.maintenanceStartHour}
+                onChange={(e) => onUpdateAdaptiveConfig({ ...adaptiveConfig, maintenanceStartHour: Number(e.target.value) })}
+                className={`w-full px-2.5 py-1.5 rounded border text-xs font-mono outline-none ${
+                  isDark ? 'bg-[#141B28] border-[#222E42] text-slate-200' : 'bg-white border-slate-300 text-slate-900'
+                }`}
+              >
+                {Array.from({ length: 24 }).map((_, i) => (
+                  <option key={i} value={i}>{String(i).padStart(2, '0')}:00 {i >= 12 ? 'PM' : 'AM'}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-slate-400 text-[10px] block mb-1 font-mono uppercase">
+                MAINTENANCE WINDOW END
+              </label>
+              <select
+                value={adaptiveConfig.maintenanceEndHour}
+                onChange={(e) => onUpdateAdaptiveConfig({ ...adaptiveConfig, maintenanceEndHour: Number(e.target.value) })}
+                className={`w-full px-2.5 py-1.5 rounded border text-xs font-mono outline-none ${
+                  isDark ? 'bg-[#141B28] border-[#222E42] text-slate-200' : 'bg-white border-slate-300 text-slate-900'
+                }`}
+              >
+                {Array.from({ length: 24 }).map((_, i) => (
+                  <option key={i} value={i}>{String(i).padStart(2, '0')}:00 {i >= 12 ? 'PM' : 'AM'}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-slate-400 text-[10px] block mb-1 font-mono uppercase">
+                MAINTENANCE MULTIPLIER ({adaptiveConfig.maintenanceFactor}x)
+              </label>
+              <input
+                type="range"
+                min={1.2}
+                max={4.0}
+                step={0.1}
+                value={adaptiveConfig.maintenanceFactor}
+                onChange={(e) => onUpdateAdaptiveConfig({ ...adaptiveConfig, maintenanceFactor: parseFloat(e.target.value) })}
+                className="w-full mt-1.5 accent-emerald-500"
+              />
+            </div>
+
+            <div>
+              <label className="text-slate-400 text-[10px] block mb-1 font-mono uppercase">
+                OFF-PEAK MULTIPLIER ({adaptiveConfig.offpeakFactor}x)
+              </label>
+              <input
+                type="range"
+                min={1.0}
+                max={2.5}
+                step={0.1}
+                value={adaptiveConfig.offpeakFactor}
+                onChange={(e) => onUpdateAdaptiveConfig({ ...adaptiveConfig, offpeakFactor: parseFloat(e.target.value) })}
+                className="w-full mt-1.5 accent-indigo-500"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Browser Text-to-Speech Configuration Card */}
       <div className={`border rounded-xl p-4 lg:p-5 space-y-4 transition-colors ${

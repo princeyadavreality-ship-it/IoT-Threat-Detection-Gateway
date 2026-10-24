@@ -12,6 +12,7 @@ interface StatCardsRowProps {
   packetRate: number;
   alerts?: ThreatAlert[];
   mtbiMinutes?: number;
+  mitigatedFalsePositives?: number;
   theme?: 'dark' | 'light';
 }
 
@@ -25,6 +26,7 @@ export const StatCardsRow: React.FC<StatCardsRowProps> = ({
   packetRate,
   alerts,
   mtbiMinutes,
+  mitigatedFalsePositives = 3,
   theme = 'dark',
 }) => {
   const isDark = theme === 'dark';
@@ -49,7 +51,7 @@ export const StatCardsRow: React.FC<StatCardsRowProps> = ({
     : 'bg-white border-slate-200 hover:border-slate-300 shadow-xs';
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
       
       {/* 1. Events Analyzed */}
       <div className={`border rounded-xl p-4 transition-all ${cardBaseStyle}`}>
@@ -212,7 +214,35 @@ export const StatCardsRow: React.FC<StatCardsRowProps> = ({
         </div>
       </div>
 
-      {/* 5. Engine Health & Uptime */}
+      {/* 5. Adaptive False Positives Mitigated */}
+      <div className={`border rounded-xl p-4 transition-all ${cardBaseStyle}`}>
+        <div className="flex items-center justify-between mb-2">
+          <span className={`text-xs font-medium ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+            FP Mitigated
+          </span>
+          <div className={`p-1.5 rounded-lg ${isDark ? 'bg-emerald-500/15 text-emerald-400' : 'bg-emerald-50 text-emerald-600'}`}>
+            <CheckCircle2 className="w-4 h-4" />
+          </div>
+        </div>
+
+        <div className="flex items-baseline gap-2.5">
+          <span className="font-display text-2xl lg:text-3xl font-bold tracking-tight tabular-nums text-emerald-400">
+            {mitigatedFalsePositives}
+          </span>
+          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+            Averted
+          </span>
+        </div>
+
+        <div className={`mt-2.5 pt-2 flex items-center justify-between text-[11px] border-t ${
+          isDark ? 'border-slate-800/60 text-slate-400' : 'border-slate-100 text-slate-500'
+        }`}>
+          <span>Adaptive Baseline</span>
+          <span className="font-mono text-[10px] text-emerald-400">Active</span>
+        </div>
+      </div>
+
+      {/* 6. Engine Health & Uptime */}
       <div className={`border rounded-xl p-4 transition-all ${cardBaseStyle}`}>
         <div className="flex items-center justify-between mb-2">
           <span className={`text-xs font-medium ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>

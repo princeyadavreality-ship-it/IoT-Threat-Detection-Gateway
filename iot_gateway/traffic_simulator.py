@@ -309,3 +309,61 @@ class TrafficSimulator:
             self.packet_buffer.append(pkt)
 
         return packets
+
+    def inject_maintenance_routine(self, target_ip: str = "192.168.1.10",
+                                   routine_type: str = "firmware_sync") -> List[Packet]:
+        """
+        SIMULATED BENIGN MAINTENANCE ACTIVITY:
+        Legitimate off-peak or scheduled maintenance window traffic.
+        Without an Adaptive Baseline, this causes false positive alert storms and wrongful quarantines!
+
+        Types:
+        - 'firmware_sync': 37.5 KB OTA firmware patch chunk (exceeds static 25KB flood limit)
+        - 'asset_discovery_scan': 17-port LAN inventory health sweep (exceeds static 15 unique port limit)
+        """
+        packets: List[Packet] = []
+        now = time.time()
+
+        if routine_type == "firmware_sync":
+            # 25 chunks * 1500 bytes = 37,500 bytes in ~1.2s from Vendor Cloud OTA CDN (52.14.99.102)
+            for i in range(25):
+                pkt = Packet(
+                    timestamp=now + (i * 0.05),
+                    src_ip="52.14.99.102",
+                    dst_ip=target_ip,
+                    src_port=443,
+                    dst_port=random.randint(49152, 65535),
+                    protocol="HTTPS",
+                    length=1500,
+                    flags="ACK,PSH",
+                    auth_success=None,
+                    payload_info=f"OTA Firmware Update Binary Chunk #{i+1}/25 [v4.2.1-prod signed]",
+                    is_attack=False,
+                    attack_type=None
+                )
+                packets.append(pkt)
+                self.packet_buffer.append(pkt)
+
+        elif routine_type == "asset_discovery_scan":
+            # Internal IT Management Controller (192.168.1.1) checking 17 service ports
+            ports = [21, 22, 23, 25, 53, 80, 110, 143, 443, 554, 1883, 3306, 5000, 8080, 8443, 8883, 9000]
+            for i, p in enumerate(ports):
+                pkt = Packet(
+                    timestamp=now + (i * 0.04),
+                    src_ip=GATEWAY_IP,
+                    dst_ip=target_ip,
+                    src_port=random.randint(40000, 50000),
+                    dst_port=p,
+                    protocol="TCP",
+                    length=54,
+                    flags="SYN",
+                    auth_success=None,
+                    payload_info=f"Scheduled Lansweeper / Asset Inventory Probe (port {p})",
+                    is_attack=False,
+                    attack_type=None
+                )
+                packets.append(pkt)
+                self.packet_buffer.append(pkt)
+
+        return packets
+

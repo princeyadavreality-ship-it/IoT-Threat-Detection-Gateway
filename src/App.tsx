@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Sidebar, NavTab } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import { TacticalRadarView } from './components/TacticalRadarView';
@@ -16,10 +16,11 @@ import { PythonProjectViewer } from './components/PythonProjectViewer';
 import { VoiceAlertHUD } from './components/VoiceAlertHUD';
 import { MTBITrendAnalysis } from './components/MTBITrendAnalysis';
 import { ThreatHeatmap } from './components/ThreatHeatmap';
-import { INITIAL_DEVICES, DEFAULT_THRESHOLDS, EXTERNAL_ATTACKER_IP, C2_SERVER_IP, getInitialAlerts } from './data/mockData';
-import { IoTDevice, Packet, ThreatAlert, ResponseAction, DetectionThresholds, AlertCategory } from './types';
+import { AdaptiveBaselineHUD } from './components/AdaptiveBaselineHUD';
+import { INITIAL_DEVICES, DEFAULT_THRESHOLDS, DEFAULT_ADAPTIVE_CONFIG, INITIAL_SUPPRESSED_EVENTS, EXTERNAL_ATTACKER_IP, C2_SERVER_IP, getInitialAlerts } from './data/mockData';
+import { IoTDevice, Packet, ThreatAlert, ResponseAction, DetectionThresholds, AlertCategory, AdaptiveBaselineConfig, SuppressedFalsePositive, OperationalRegime } from './types';
 import { speechEngine } from './utils/speechNotification';
-import { Crosshair, KeyRound, Radio, Zap, ShieldAlert, ArrowUpRight, Filter } from 'lucide-react';
+import { Crosshair, KeyRound, Radio, Zap, ShieldAlert, ArrowUpRight, Filter, Clock } from 'lucide-react';
 
 export default function App() {
   // State
@@ -36,6 +37,8 @@ export default function App() {
   const [ttsEnabled, setTtsEnabled] = useState<boolean>(speechEngine.isEnabled());
   const [isSpeakingTts, setIsSpeakingTts] = useState<boolean>(false);
   const [thresholds, setThresholds] = useState<DetectionThresholds>(DEFAULT_THRESHOLDS);
+  const [adaptiveConfig, setAdaptiveConfig] = useState<AdaptiveBaselineConfig>(DEFAULT_ADAPTIVE_CONFIG);
+  const [suppressedEvents, setSuppressedEvents] = useState<SuppressedFalsePositive[]>(INITIAL_SUPPRESSED_EVENTS);
   const [lastScanTime, setLastScanTime] = useState<number>(Date.now());
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [isAttackDrawerOpen, setIsAttackDrawerOpen] = useState<boolean>(false);
@@ -164,6 +167,57 @@ export default function App() {
     return () => clearInterval(interval);
   }, [monitoringActive, isPacketStreamPaused]);
 
+  // Compute time of day, operational regime, and effective thresholds
+  const currentHour = useMemo(() => {
+    if (adaptiveConfig.mode === 'MANUAL_SIMULATED') {
+      return adaptiveConfig.simulatedHour;
+    }
+    const d = new Date();
+    return d.getHours() + d.getMinutes() / 60;
+  }, [adaptiveConfig.mode, adaptiveConfig.simulatedHour]);
+
+  const { regime, multiplier } = useMemo(() => {
+    if (!adaptiveConfig.enabled) {
+      return { regime: 'PEAK_HOURS' as OperationalRegime, multiplier: 1.0 };
+    }
+    const mStart = adaptiveConfig.maintenanceStartHour;
+    const mEnd = adaptiveConfig.maintenanceEndHour;
+    let inM = false;
+    if (mStart < mEnd) {
+      inM = currentHour >= mStart && currentHour < mEnd;
+    } else {
+      inM = currentHour >= mStart || currentHour < mEnd;
+    }
+
+    if (inM) {
+      return { regime: 'MAINTENANCE_WINDOW' as OperationalRegime, multiplier: adaptiveConfig.maintenanceFactor };
+    }
+
+    const isOff = currentHour >= 18 || currentHour < 2 || (currentHour >= 5 && currentHour < 8);
+    if (isOff) {
+      return { regime: 'OFF_PEAK' as OperationalRegime, multiplier: adaptiveConfig.offpeakFactor };
+    }
+
+    return { regime: 'PEAK_HOURS' as OperationalRegime, multiplier: 1.0 };
+  }, [adaptiveConfig, currentHour]);
+
+  const effectiveThresholds = useMemo(() => {
+    const m = adaptiveConfig.enabled ? multiplier : 1.0;
+    return {
+      portScanUniquePorts: Math.round(thresholds.portScanUniquePorts * m),
+      portScanWindowSec: thresholds.portScanWindowSec,
+      bruteForceFailures: Math.round(thresholds.bruteForceFailures * m),
+      bruteForceWindowSec: thresholds.bruteForceWindowSec,
+      beaconingMinPackets: thresholds.beaconingMinPackets,
+      beaconingMaxJitterSec: Number((thresholds.beaconingMaxJitterSec * (1 + (m - 1) * 0.4)).toFixed(3)),
+      beaconingWindowSec: thresholds.beaconingWindowSec,
+      volumeFloodBytes: Math.round(thresholds.volumeFloodBytes * m),
+      volumeFloodWindowSec: thresholds.volumeFloodWindowSec,
+      usbExfiltrationBytes: thresholds.usbExfiltrationBytes,
+      usbExfiltrationWindowSec: thresholds.usbExfiltrationWindowSec,
+    };
+  }, [thresholds, adaptiveConfig.enabled, multiplier]);
+
   // Core Rule-Based Detection Engine Heuristics
   const runDetectionScan = (packetList?: Packet[]) => {
     setIsScanning(true);
@@ -183,7 +237,7 @@ export default function App() {
     };
 
     // 1. Port Scan Detection (Unique destination ports >= threshold)
-    const scanWindowMs = thresholds.portScanWindowSec * 1000;
+    const scanWindowMs = effectiveThresholds.portScanWindowSec * 1000;
     const scanMap = new Map<string, Set<number>>();
     pktsToInspect.forEach((p) => {
       if (now - p.timestamp <= scanWindowMs) {
@@ -195,28 +249,67 @@ export default function App() {
 
     scanMap.forEach((ports, key) => {
       const [src, dst] = key.split('->');
-      if (ports.size >= thresholds.portScanUniquePorts && !isSuppressed('PORT_SCAN', src, dst)) {
-        const alertId = `ALT-${String(alertCounterRef.current++).padStart(4, '0')}`;
-        newAlerts.push({
-          id: alertId,
-          timestamp: now,
-          category: 'PORT_SCAN',
-          severity: 'HIGH',
-          sourceIp: src,
-          targetIp: dst,
-          detail: `Rapid TCP port scan detected from ${src}: probed ${ports.size} ports on ${dst} within ${thresholds.portScanWindowSec}s.`,
-          evidence: {
-            uniquePortsCount: ports.size,
-            samplePorts: Array.from(ports).slice(0, 8),
-            windowSec: thresholds.portScanWindowSec,
-          },
-          status: 'ACTIVE',
-        });
+      if (ports.size >= thresholds.portScanUniquePorts) {
+        // Adaptive Baseline Check: Is this within the expanded maintenance allowance?
+        if (
+          ports.size < effectiveThresholds.portScanUniquePorts &&
+          adaptiveConfig.enabled &&
+          adaptiveConfig.autoSuppressMaintenanceSpikes
+        ) {
+          if (!isSuppressed('SUPPRESSED_PORT_SCAN', src, dst)) {
+            setSuppressedEvents((prev) => [
+              {
+                id: `SUP-${String(Date.now()).slice(-4)}`,
+                timestamp: now,
+                category: 'PORT_SCAN',
+                sourceIp: src,
+                targetIp: dst,
+                rawMetric: ports.size,
+                metricUnit: 'Ports',
+                staticThreshold: thresholds.portScanUniquePorts,
+                adaptiveThreshold: effectiveThresholds.portScanUniquePorts,
+                regime: regime,
+                multiplier: multiplier,
+                reason: `Automated asset discovery probe (${ports.size} ports) safely absorbed under Adaptive Baseline during ${regime}. Preserved node connectivity.`,
+                preventedAction: `iptables -A FORWARD -s ${src} -j DROP`,
+              },
+              ...prev.slice(0, 49),
+            ]);
+          }
+          return;
+        }
+
+        if (!isSuppressed('PORT_SCAN', src, dst)) {
+          const alertId = `ALT-${String(alertCounterRef.current++).padStart(4, '0')}`;
+          newAlerts.push({
+            id: alertId,
+            timestamp: now,
+            category: 'PORT_SCAN',
+            severity: 'HIGH',
+            sourceIp: src,
+            targetIp: dst,
+            detail: `Rapid TCP port scan detected from ${src}: probed ${ports.size} ports on ${dst} within ${thresholds.portScanWindowSec}s${
+              multiplier > 1.0 ? ` [Regime: ${regime}, Adaptive Limit: ${effectiveThresholds.portScanUniquePorts}]` : ''
+            }.`,
+            evidence: {
+              uniquePortsCount: ports.size,
+              samplePorts: Array.from(ports).slice(0, 8),
+              windowSec: thresholds.portScanWindowSec,
+              adaptiveBaseline: {
+                regime,
+                multiplier,
+                effectiveThreshold: effectiveThresholds.portScanUniquePorts,
+                baselineAdjusted: multiplier > 1.0,
+              },
+            },
+            status: 'ACTIVE',
+          });
+        }
       }
     });
 
     // 2. Brute Force Login Detection (Failed auth count >= threshold)
-    const bruteWindowMs = thresholds.bruteForceWindowSec * 1000;
+    const bruteWindowMs = effectiveThresholds.bruteForceWindowSec * 1000;
     const bruteMap = new Map<string, number>();
     pktsToInspect.forEach((p) => {
       if (now - p.timestamp <= bruteWindowMs && p.authSuccess === false) {
@@ -228,28 +321,64 @@ export default function App() {
     bruteMap.forEach((count, key) => {
       const [src, rest] = key.split('->');
       const [dst, port] = rest.split(':');
-      if (count >= thresholds.bruteForceFailures && !isSuppressed('BRUTE_FORCE', src, dst)) {
-        const alertId = `ALT-${String(alertCounterRef.current++).padStart(4, '0')}`;
-        newAlerts.push({
-          id: alertId,
-          timestamp: now,
-          category: 'BRUTE_FORCE',
-          severity: 'HIGH',
-          sourceIp: src,
-          targetIp: dst,
-          detail: `Credential brute-force login surge from ${src} targeting ${dst}:${port} (${count} failed attempts).`,
-          evidence: {
-            failedAttempts: count,
-            targetPort: Number(port),
-            windowSec: thresholds.bruteForceWindowSec,
-          },
-          status: 'ACTIVE',
-        });
+      if (count >= thresholds.bruteForceFailures) {
+        // Adaptive Baseline Check
+        if (
+          count < effectiveThresholds.bruteForceFailures &&
+          adaptiveConfig.enabled &&
+          adaptiveConfig.autoSuppressMaintenanceSpikes
+        ) {
+          if (!isSuppressed('SUPPRESSED_BRUTE_FORCE', src, dst)) {
+            setSuppressedEvents((prev) => [
+              {
+                id: `SUP-${String(Date.now()).slice(-4)}`,
+                timestamp: now,
+                category: 'BRUTE_FORCE',
+                sourceIp: src,
+                targetIp: dst,
+                rawMetric: count,
+                metricUnit: 'Attempts',
+                staticThreshold: thresholds.bruteForceFailures,
+                adaptiveThreshold: effectiveThresholds.bruteForceFailures,
+                regime: regime,
+                multiplier: multiplier,
+                reason: `Failed auth surge (${count} attempts on port ${port}) tolerated under Adaptive Baseline during ${regime}. Absorbed automated credential rotation.`,
+                preventedAction: `iptables -A FORWARD -s ${src} -j DROP`,
+              },
+              ...prev.slice(0, 49),
+            ]);
+          }
+          return;
+        }
+
+        if (!isSuppressed('BRUTE_FORCE', src, dst)) {
+          const alertId = `ALT-${String(alertCounterRef.current++).padStart(4, '0')}`;
+          newAlerts.push({
+            id: alertId,
+            timestamp: now,
+            category: 'BRUTE_FORCE',
+            severity: 'HIGH',
+            sourceIp: src,
+            targetIp: dst,
+            detail: `Credential brute-force login surge from ${src} targeting ${dst}:${port} (${count} failed attempts).`,
+            evidence: {
+              failedAttempts: count,
+              targetPort: Number(port),
+              windowSec: thresholds.bruteForceWindowSec,
+              adaptiveBaseline: {
+                regime,
+                multiplier,
+                effectiveThreshold: effectiveThresholds.bruteForceFailures,
+              },
+            },
+            status: 'ACTIVE',
+          });
+        }
       }
     });
 
     // 3. C2 Beaconing Detection (Low jitter periodicity)
-    const beaconWindowMs = thresholds.beaconingWindowSec * 1000;
+    const beaconWindowMs = effectiveThresholds.beaconingWindowSec * 1000;
     const beaconMap = new Map<string, number[]>();
     const sorted = [...pktsToInspect].sort((a, b) => a.timestamp - b.timestamp);
     sorted.forEach((p) => {
@@ -261,20 +390,20 @@ export default function App() {
     });
 
     beaconMap.forEach((timestamps, key) => {
-      if (timestamps.length >= thresholds.beaconingMinPackets) {
+      if (timestamps.length >= effectiveThresholds.beaconingMinPackets) {
         const deltas: number[] = [];
         for (let i = 1; i < timestamps.length; i++) {
           const delta = (timestamps[i] - timestamps[i - 1]) / 1000;
           if (delta > 0.001) deltas.push(delta);
         }
 
-        if (deltas.length >= thresholds.beaconingMinPackets - 1) {
+        if (deltas.length >= effectiveThresholds.beaconingMinPackets - 1) {
           const mean = deltas.reduce((a, b) => a + b, 0) / deltas.length;
           const variance = deltas.reduce((acc, d) => acc + Math.pow(d - mean, 2), 0) / deltas.length;
           const stdDev = Math.sqrt(variance);
           const [src, dst] = key.split('->');
 
-          if (mean >= 0.5 && stdDev <= thresholds.beaconingMaxJitterSec && !isSuppressed('C2_BEACONING', src, dst)) {
+          if (mean >= 0.5 && stdDev <= effectiveThresholds.beaconingMaxJitterSec && !isSuppressed('C2_BEACONING', src, dst)) {
             const alertId = `ALT-${String(alertCounterRef.current++).padStart(4, '0')}`;
             newAlerts.push({
               id: alertId,
@@ -289,6 +418,11 @@ export default function App() {
                 meanIntervalSec: Number(mean.toFixed(2)),
                 jitterStdDevSec: Number(stdDev.toFixed(4)),
                 sampleDeltas: deltas.slice(0, 4).map((d) => Number(d.toFixed(2))),
+                adaptiveBaseline: {
+                  regime,
+                  multiplier,
+                  jitterLimit: effectiveThresholds.beaconingMaxJitterSec,
+                },
               },
               status: 'ACTIVE',
             });
@@ -298,7 +432,7 @@ export default function App() {
     });
 
     // 4. Volume Flood Detection (Total bytes >= threshold in window)
-    const floodWindowMs = thresholds.volumeFloodWindowSec * 1000;
+    const floodWindowMs = effectiveThresholds.volumeFloodWindowSec * 1000;
     const floodMap = new Map<string, { bytes: number; count: number }>();
     pktsToInspect.forEach((p) => {
       // Protocol filter: ignore USB/Endpoint DLP writes to prevent cross-contamination
@@ -311,24 +445,62 @@ export default function App() {
 
     floodMap.forEach((stat, key) => {
       const [src, dst] = key.split('->');
-      if (stat.bytes >= thresholds.volumeFloodBytes && !isSuppressed('VOLUME_FLOOD', src, dst)) {
-        const alertId = `ALT-${String(alertCounterRef.current++).padStart(4, '0')}`;
-        newAlerts.push({
-          id: alertId,
-          timestamp: now,
-          category: 'VOLUME_FLOOD',
-          severity: 'HIGH',
-          sourceIp: src,
-          targetIp: dst,
-          detail: `Volume flood DDoS surge from ${src} -> ${dst}: ${stat.bytes.toLocaleString()} bytes transmitted in ${thresholds.volumeFloodWindowSec}s.`,
-          evidence: {
-            totalBytes: stat.bytes,
-            packetCount: stat.count,
-            windowSec: thresholds.volumeFloodWindowSec,
-            bandwidthRate: `${Math.round(stat.bytes / thresholds.volumeFloodWindowSec / 1024)} KB/s`,
-          },
-          status: 'ACTIVE',
-        });
+      if (stat.bytes >= thresholds.volumeFloodBytes) {
+        // Adaptive Baseline Check
+        if (
+          stat.bytes < effectiveThresholds.volumeFloodBytes &&
+          adaptiveConfig.enabled &&
+          adaptiveConfig.autoSuppressMaintenanceSpikes
+        ) {
+          if (!isSuppressed('SUPPRESSED_VOLUME_FLOOD', src, dst)) {
+            setSuppressedEvents((prev) => [
+              {
+                id: `SUP-${String(Date.now()).slice(-4)}`,
+                timestamp: now,
+                category: 'VOLUME_FLOOD',
+                sourceIp: src,
+                targetIp: dst,
+                rawMetric: stat.bytes,
+                metricUnit: 'Bytes',
+                staticThreshold: thresholds.volumeFloodBytes,
+                adaptiveThreshold: effectiveThresholds.volumeFloodBytes,
+                regime: regime,
+                multiplier: multiplier,
+                reason: `OTA firmware binary / maintenance backup surge of ${(stat.bytes / 1024).toFixed(1)} KB safely absorbed under Adaptive Baseline during ${regime}. Prevented false positive isolation.`,
+                preventedAction: `iptables -A FORWARD -s ${src} -j DROP`,
+              },
+              ...prev.slice(0, 49),
+            ]);
+          }
+          return;
+        }
+
+        if (!isSuppressed('VOLUME_FLOOD', src, dst)) {
+          const alertId = `ALT-${String(alertCounterRef.current++).padStart(4, '0')}`;
+          newAlerts.push({
+            id: alertId,
+            timestamp: now,
+            category: 'VOLUME_FLOOD',
+            severity: 'HIGH',
+            sourceIp: src,
+            targetIp: dst,
+            detail: `Volume flood DDoS surge from ${src} -> ${dst}: ${stat.bytes.toLocaleString()} bytes transmitted in ${thresholds.volumeFloodWindowSec}s${
+              multiplier > 1.0 ? ` [Regime: ${regime}, Adaptive Limit: ${effectiveThresholds.volumeFloodBytes.toLocaleString()}B]` : ''
+            }.`,
+            evidence: {
+              totalBytes: stat.bytes,
+              packetCount: stat.count,
+              windowSec: thresholds.volumeFloodWindowSec,
+              bandwidthRate: `${Math.round(stat.bytes / thresholds.volumeFloodWindowSec / 1024)} KB/s`,
+              adaptiveBaseline: {
+                regime,
+                multiplier,
+                effectiveThresholdBytes: effectiveThresholds.volumeFloodBytes,
+              },
+            },
+            status: 'ACTIVE',
+          });
+        }
       }
     });
 
@@ -543,6 +715,61 @@ export default function App() {
     }, 450);
   };
 
+  // Maintenance Routine Simulation Handler (Adaptive Baseline Test)
+  const handleTriggerMaintenanceTest = (routineType: 'firmware_sync' | 'asset_discovery_scan') => {
+    setIsInjecting(true);
+    const now = Date.now();
+    const injectedPackets: Packet[] = [];
+    const targetCameraIp = '192.168.1.10';
+
+    if (routineType === 'firmware_sync') {
+      // 25 chunks * 1500 bytes = 37,500 bytes (exceeds static 25KB, within adaptive 55KB)
+      for (let i = 0; i < 25; i++) {
+        injectedPackets.push({
+          id: `maint-fw-${now}-${i}`,
+          timestamp: now + i * 40,
+          srcIp: '52.14.99.102',
+          dstIp: targetCameraIp,
+          srcPort: 443,
+          dstPort: 49152 + i,
+          protocol: 'HTTPS',
+          length: 1500,
+          flags: 'ACK,PSH',
+          authSuccess: null,
+          payloadInfo: `[MAINTENANCE ROUTINE] OTA Firmware Update Chunk #${i + 1}/25 [v4.2.1-prod signed]`,
+          isAttack: false,
+        });
+      }
+    } else if (routineType === 'asset_discovery_scan') {
+      // 17 ports probe from Gateway (exceeds static 15, within adaptive 33)
+      const ports = [21, 22, 23, 25, 53, 80, 110, 143, 443, 554, 1883, 3306, 5000, 8080, 8443, 8883, 9000];
+      ports.forEach((p, idx) => {
+        injectedPackets.push({
+          id: `maint-scan-${now}-${idx}`,
+          timestamp: now + idx * 35,
+          srcIp: '192.168.1.1',
+          dstIp: targetCameraIp,
+          srcPort: 42000 + idx,
+          dstPort: p,
+          protocol: 'TCP',
+          length: 54,
+          flags: 'SYN',
+          authSuccess: null,
+          payloadInfo: `[MAINTENANCE ROUTINE] Scheduled Lansweeper / Inventory Discovery Probe (port ${p})`,
+          isAttack: false,
+        });
+      });
+    }
+
+    const updated = [...packets, ...injectedPackets];
+    setPackets(updated);
+
+    setTimeout(() => {
+      runDetectionScan(updated);
+      setIsInjecting(false);
+    }, 400);
+  };
+
   // Manual Isolation Toggle
   const handleToggleIsolate = (ip: string) => {
     if (blocklist.includes(ip)) {
@@ -622,6 +849,9 @@ export default function App() {
         theme={theme}
         onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
         onOpenAttackDrawer={() => setIsAttackDrawerOpen(true)}
+        adaptiveRegime={regime}
+        adaptiveMultiplier={multiplier}
+        onOpenBaseline={() => setCurrentTab('baseline')}
       />
 
       {/* Main Layout Body: Persistent Left Sidebar + Main Content */}
@@ -636,6 +866,7 @@ export default function App() {
           deviceCount={devices.length}
           isSimulating={isInjecting}
           onOpenAttackDrawer={() => setIsAttackDrawerOpen(true)}
+          mitigatedCount={suppressedEvents.length}
           theme={theme}
         />
 
@@ -745,6 +976,7 @@ export default function App() {
                 uptimeSeconds={uptimeSeconds}
                 packetRate={packetRate}
                 alerts={alerts}
+                mitigatedFalsePositives={suppressedEvents.length}
                 theme={theme}
               />
 
@@ -869,6 +1101,19 @@ export default function App() {
                 theme={theme}
               />
             </div>
+          )}
+
+          {/* TAB 1.5: ADAPTIVE BASELINE HEURISTIC */}
+          {currentTab === 'baseline' && (
+            <AdaptiveBaselineHUD
+              config={adaptiveConfig}
+              onUpdateConfig={setAdaptiveConfig}
+              thresholds={thresholds}
+              suppressedEvents={suppressedEvents}
+              onTriggerMaintenanceTest={handleTriggerMaintenanceTest}
+              onClearSuppressedEvents={() => setSuppressedEvents([])}
+              theme={theme}
+            />
           )}
 
           {/* TAB 2: THREAT ALERTS */}
@@ -1031,6 +1276,8 @@ export default function App() {
                   speechEngine.setEnabled(next);
                   setTtsEnabled(next);
                 }}
+                adaptiveConfig={adaptiveConfig}
+                onUpdateAdaptiveConfig={setAdaptiveConfig}
                 theme={theme}
               />
             </div>
