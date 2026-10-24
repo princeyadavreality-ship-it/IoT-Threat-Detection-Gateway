@@ -62,10 +62,11 @@ class ResponseEngine:
         # Policy matrix: Map alert category to default response action
         # In IoT environments, active threats are typically isolated immediately
         self.policy_matrix: Dict[str, str] = {
-            "PORT_SCAN": "ISOLATE",       # Isolate scanning source
-            "BRUTE_FORCE": "ISOLATE",     # Isolate brute-forcing source
-            "C2_BEACONING": "ISOLATE",    # Isolate compromised internal device
-            "VOLUME_FLOOD": "ISOLATE",    # Drop flood traffic immediately
+            "PORT_SCAN": "ISOLATE",          # Isolate scanning source
+            "BRUTE_FORCE": "ISOLATE",        # Isolate brute-forcing source
+            "C2_BEACONING": "ISOLATE",       # Isolate compromised internal device
+            "VOLUME_FLOOD": "ISOLATE",       # Drop flood traffic immediately
+            "USB_EXFILTRATION": "ISOLATE",   # Lock down endpoint USB mass storage
         }
 
     def process_alert(self, alert: Alert) -> ResponseAction:
@@ -76,21 +77,32 @@ class ResponseEngine:
         # Determine target IP to isolate:
         # For C2 beaconing, we want to isolate the compromised internal source IP
         # For inbound attacks (port scan, brute force, flood), we block the source IP
+        # For USB exfiltration, we lock down the offending endpoint workstation
         ip_to_isolate = alert.source_ip
 
         # Check policy
         decision = self.policy_matrix.get(alert.category, "MONITOR")
 
-        # Generate exact iptables rules:
-        # 1. FORWARD chain: Drops forwarded traffic crossing the gateway (to/from the Internet)
-        # 2. INPUT chain: Drops traffic directly hitting the gateway itself
-        iptables_cmd = f"iptables -A FORWARD -s {ip_to_isolate} -j DROP && iptables -A INPUT -s {ip_to_isolate} -j DROP"
-        windows_cmd = f'netsh advfirewall firewall add rule name="IoT_Quarantine_{ip_to_isolate}" dir=in action=block remoteip={ip_to_isolate}'
-
-        reason = (
-            f"Automated policy triggered: {alert.category} alert from {ip_to_isolate}. "
-            f"Risk severity: {alert.severity}. Isolating to prevent lateral movement or data exfiltration."
-        )
+        # Generate command based on threat category:
+        # For network attacks, generate Linux iptables and Windows netsh commands.
+        # For air-gapped USB exfiltration, generate endpoint OS commands to disable USB mass storage!
+        if alert.category == "USB_EXFILTRATION":
+            # Endpoint USB storage lockdown commands
+            iptables_cmd = "modprobe -r usb_storage && echo 'blacklist usb-storage' >> /etc/modprobe.d/blacklist.conf"
+            windows_cmd = 'reg add "HKLM\\SYSTEM\\CurrentControlSet\\Services\\USBSTOR" /v Start /t REG_DWORD /d 4 /f'
+            reason = (
+                f"Endpoint DLP policy triggered: {alert.category} on {ip_to_isolate}. "
+                f"Air-gapped data theft detected. Disabling USB Mass Storage driver (USBSTOR=4) to freeze ports."
+            )
+        else:
+            # 1. FORWARD chain: Drops forwarded traffic crossing the gateway (to/from the Internet)
+            # 2. INPUT chain: Drops traffic directly hitting the gateway itself
+            iptables_cmd = f"iptables -A FORWARD -s {ip_to_isolate} -j DROP && iptables -A INPUT -s {ip_to_isolate} -j DROP"
+            windows_cmd = f'netsh advfirewall firewall add rule name="IoT_Quarantine_{ip_to_isolate}" dir=in action=block remoteip={ip_to_isolate}'
+            reason = (
+                f"Automated policy triggered: {alert.category} alert from {ip_to_isolate}. "
+                f"Risk severity: {alert.severity}. Isolating to prevent lateral movement or data exfiltration."
+            )
 
         action_status = "MONITORING"
         executed_live = False
@@ -101,19 +113,25 @@ class ResponseEngine:
 
             print("\n" + "="*70)
             print(f"[RESPONSE ENGINE] 🚨 ALERT TRIGGERED: {alert.category}")
-            print(f"[RESPONSE ENGINE] Target IP to isolate: {ip_to_isolate}")
+            print(f"[RESPONSE ENGINE] Target to isolate: {ip_to_isolate}")
             print(f"[RESPONSE ENGINE] Decision: {decision}")
 
             if self.safety_mode:
                 print(f"[RESPONSE ENGINE] [SIMULATION MODE - Safety Flag ON]")
-                print(f"[RESPONSE ENGINE] Iptables command that WOULD run on Linux / Raspberry Pi:")
-                print(f"    >>> {iptables_cmd}")
-                print(f"[RESPONSE ENGINE] Windows equivalent command:")
-                print(f"    >>> {windows_cmd}")
+                if alert.category == "USB_EXFILTRATION":
+                    print(f"[RESPONSE ENGINE] Linux / Raspberry Pi USB Lockdown command:")
+                    print(f"    >>> {iptables_cmd}")
+                    print(f"[RESPONSE ENGINE] Windows Registry USBSTOR Disable command:")
+                    print(f"    >>> {windows_cmd}")
+                else:
+                    print(f"[RESPONSE ENGINE] Iptables command that WOULD run on Linux / Raspberry Pi:")
+                    print(f"    >>> {iptables_cmd}")
+                    print(f"[RESPONSE ENGINE] Windows equivalent command:")
+                    print(f"    >>> {windows_cmd}")
                 print("="*70 + "\n")
             else:
                 # Live execution when deployed on actual hardware (e.g. Raspberry Pi)
-                print(f"[RESPONSE ENGINE] ⚠️ SAFETY FLAG OFF: Executing real firewall rule...")
+                print(f"[RESPONSE ENGINE] ⚠️ SAFETY FLAG OFF: Executing real isolation rule...")
                 executed_live = self._execute_live_command(iptables_cmd, windows_cmd)
                 print("="*70 + "\n")
 
@@ -140,10 +158,22 @@ class ResponseEngine:
         """
         if ip in self.blocklist:
             self.blocklist.remove(ip)
-            teardown_iptables = f"iptables -D FORWARD -s {ip} -j DROP && iptables -D INPUT -s {ip} -j DROP"
-            teardown_windows = f'netsh advfirewall firewall delete rule name="IoT_Quarantine_{ip}"'
+            
+            # Check if this host was blocked for USB exfiltration
+            was_usb_block = any(
+                a.target_ip == ip and a.category == "USB_EXFILTRATION" and a.status == "ACTIVE_BLOCK"
+                for a in self.action_history
+            )
+            
+            if was_usb_block:
+                teardown_iptables = "sed -i '/blacklist usb-storage/d' /etc/modprobe.d/blacklist.conf && modprobe usb_storage"
+                teardown_windows = 'reg add "HKLM\\SYSTEM\\CurrentControlSet\\Services\\USBSTOR" /v Start /t REG_DWORD /d 3 /f'
+                print(f"[RESPONSE ENGINE] 🟢 USB Lockdown lifted for {ip}. Restored USBSTOR to Start=3.")
+            else:
+                teardown_iptables = f"iptables -D FORWARD -s {ip} -j DROP && iptables -D INPUT -s {ip} -j DROP"
+                teardown_windows = f'netsh advfirewall firewall delete rule name="IoT_Quarantine_{ip}"'
+                print(f"[RESPONSE ENGINE] 🟢 IP {ip} unblocked. Reverted rule: {teardown_iptables}")
 
-            print(f"[RESPONSE ENGINE] 🟢 IP {ip} unblocked. Reverted rule: {teardown_iptables}")
             if not self.safety_mode:
                 self._execute_live_command(teardown_iptables, teardown_windows)
 

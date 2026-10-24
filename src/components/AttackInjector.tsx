@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Crosshair, KeyRound, Radio, Zap, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Crosshair, KeyRound, Radio, Zap, AlertTriangle, CheckCircle2, HardDrive } from 'lucide-react';
 import { AlertCategory, IoTDevice } from '../types';
 
 interface AttackInjectorProps {
@@ -32,7 +32,7 @@ export const AttackInjector: React.FC<AttackInjectorProps> = ({
             </h2>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
-            Inject realistic malicious traffic vectors directly into the live packet stream to test detection heuristics and automated isolation.
+            Inject realistic network and endpoint attack vectors into the telemetry pipeline to test detection heuristics and automated isolation.
           </p>
         </div>
         {lastInjected && (
@@ -43,7 +43,7 @@ export const AttackInjector: React.FC<AttackInjectorProps> = ({
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3.5">
         
         {/* Attack 1: Port Scan */}
         <div className="bg-slate-800/60 hover:bg-slate-800/90 border border-slate-700/70 hover:border-slate-600 rounded-lg p-3.5 flex flex-col justify-between transition-all">
@@ -56,7 +56,7 @@ export const AttackInjector: React.FC<AttackInjectorProps> = ({
             </div>
             <h3 className="text-xs font-bold text-white">Port Scan Sweep</h3>
             <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-              Attacker <code className="text-slate-300 font-mono">198.51.100.42</code> sweeps 18 unique TCP ports on the Camera (<code className="text-slate-300 font-mono">192.168.1.10</code>) in under 1 second.
+              Attacker <code className="text-slate-300 font-mono">198.51.100.42</code> sweeps 18 unique TCP ports on Camera (<code className="text-slate-300 font-mono">192.168.1.10</code>) in under 1s.
             </p>
           </div>
           <button
@@ -81,7 +81,7 @@ export const AttackInjector: React.FC<AttackInjectorProps> = ({
             </div>
             <h3 className="text-xs font-bold text-white">Brute-Force Auth</h3>
             <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-              Attacker floods the Smart Door Lock (<code className="text-slate-300 font-mono">192.168.1.11:22</code>) with 8 rapid failed password attempts in 2 seconds.
+              Attacker floods Smart Door Lock (<code className="text-slate-300 font-mono">192.168.1.11:22</code>) with 8 rapid failed password attempts in 2s.
             </p>
           </div>
           <button
@@ -104,9 +104,9 @@ export const AttackInjector: React.FC<AttackInjectorProps> = ({
               </span>
               <Radio className="w-4 h-4 text-amber-400" />
             </div>
-            <h3 className="text-xs font-bold text-white">C2 Beaconing (Low Jitter)</h3>
+            <h3 className="text-xs font-bold text-white">C2 Beaconing</h3>
             <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-              Compromised Power Plug (<code className="text-slate-300 font-mono">192.168.1.13</code>) makes regular heartbeats to C2 (<code className="text-slate-300 font-mono">203.0.113.88</code>) with jitter variance &lt; 0.05s.
+              Compromised Power Plug (<code className="text-slate-300 font-mono">192.168.1.13</code>) makes fixed-rate heartbeats to C2 (<code className="text-slate-300 font-mono">203.0.113.88</code>) with jitter variance &lt; 0.05s.
             </p>
           </div>
           <button
@@ -125,13 +125,13 @@ export const AttackInjector: React.FC<AttackInjectorProps> = ({
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 uppercase">
-                DDoS / Exfiltration
+                DDoS / Exfil
               </span>
               <AlertTriangle className="w-4 h-4 text-cyan-400" />
             </div>
             <h3 className="text-xs font-bold text-white">Volume Flood Surge</h3>
             <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-              Massive UDP burst of 35 packets (~49,000 bytes) hitting Camera (<code className="text-slate-300 font-mono">192.168.1.10:80</code>) within 0.7s to choke gateway capacity.
+              Massive UDP burst of 35 packets (~49,000 bytes) hitting Camera (<code className="text-slate-300 font-mono">192.168.1.10:80</code>) within 0.7s.
             </p>
           </div>
           <button
@@ -142,6 +142,31 @@ export const AttackInjector: React.FC<AttackInjectorProps> = ({
           >
             <AlertTriangle className="w-3.5 h-3.5" />
             <span>Inject Volume Flood (49 KB)</span>
+          </button>
+        </div>
+
+        {/* Attack 5: Air-Gapped USB Exfiltration */}
+        <div className="bg-slate-800/60 hover:bg-slate-800/90 border border-amber-500/40 hover:border-amber-400 rounded-lg p-3.5 flex flex-col justify-between transition-all">
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase">
+                Air-Gapped DLP
+              </span>
+              <HardDrive className="w-4 h-4 text-amber-400" />
+            </div>
+            <h3 className="text-xs font-bold text-white">USB Exfiltration</h3>
+            <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+              Insider copies 85 MB confidential database from <code className="text-slate-300 font-mono">192.168.1.15</code> to unauthorized SanDisk USB without network traversal.
+            </p>
+          </div>
+          <button
+            id="inject-usb-exfiltration-btn"
+            disabled={isInjecting}
+            onClick={() => handleInject('USB_EXFILTRATION', '192.168.1.15')}
+            className="mt-3 w-full py-1.5 px-3 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+          >
+            <HardDrive className="w-3.5 h-3.5" />
+            <span>Inject USB Exfil (85 MB)</span>
           </button>
         </div>
 

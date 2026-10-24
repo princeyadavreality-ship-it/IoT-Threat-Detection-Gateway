@@ -10,9 +10,10 @@ The codebase is strictly modularized to decouple packet ingestion from detection
 
 | File | Component | Responsibility |
 | :--- | :--- | :--- |
-| `traffic_simulator.py` | **Traffic Simulator** | Models 5 IoT devices (Camera, Door Lock, Temp Sensor, Power Plug, Thermostat) emitting benign HTTP/MQTT/HTTPS packets. Injects 4 realistic attack patterns. |
-| `detection_engine.py` | **Detection Engine** | Stateful, sliding-window rule engine inspecting packet headers and behavioral metrics: Port Scans, Brute Force, C2 Beaconing (low jitter variance), and Volume Floods. |
-| `response_engine.py` | **Response Engine** | Decides `ISOLATE` vs `MONITOR`, maintains an active IP blocklist, synthesizes exact `iptables` and Windows Firewall commands, and provides a dry-run safety flag. |
+| `traffic_simulator.py` | **Traffic Simulator** | Models 5 IoT devices (Camera, Door Lock, Temp Sensor, Power Plug, Thermostat) emitting benign HTTP/MQTT/HTTPS packets. Injects realistic network attacks. |
+| `usb_monitor.py` | **Endpoint USB Agent** | Simulates host telemetry agent (e.g. `MANAGER-LAPTOP`) monitoring USB insertions and DLP copy operations. Bridges air-gapped file theft events to gateway. |
+| `detection_engine.py` | **Detection Engine** | Stateful, sliding-window rule engine inspecting packet headers and behavioral metrics: Port Scans, Brute Force, C2 Beaconing (low jitter variance), Volume Floods, and USB Exfiltration. |
+| `response_engine.py` | **Response Engine** | Decides `ISOLATE` vs `MONITOR`, maintains an active blocklist, synthesizes exact `iptables`, Windows `netsh`, and Windows Registry `USBSTOR` lockdown commands with dry-run safety. |
 | `dashboard.py` | **Live Web Dashboard** | Modern FastAPI web application rendering live device telemetry, alerts table, firewall ledger, and interactive attack injection buttons. |
 | `main.py` | **Unified Runner** | CLI entry point supporting both automated end-to-end simulation demonstration and web server startup. |
 | `requirements.txt` | **Dependencies** | Minimal dependencies (`fastapi`, `uvicorn`, `pydantic`). |
@@ -90,8 +91,17 @@ Then open your browser at:
 
 ### 4. Volume Flood (DDoS / Exfiltration)
 - **Attack Behavior**: A sudden burst of high-bandwidth traffic exceeding the expected baseline for an IoT sensor or camera.
-- **Detection Algorithm**: Aggregates byte volume in a 3-second sliding window. Triggers when transmitted bytes $\ge 25,000\text{ bytes}$ (or configurable bandwidth ceiling).
+- **Detection Algorithm**: Aggregates byte volume in a 3-second sliding window. Triggers when transmitted bytes $\ge 25,000\text{ bytes}$ (or configurable bandwidth ceiling). Note: Protocol filtering strictly checks network transports (`TCP`, `UDP`) to prevent cross-contamination with endpoint USB writes.
 - **Response**: Categorized as `HIGH` severity. Drops traffic stream immediately.
+
+### 5. Air-Gapped USB Data Exfiltration (Endpoint DLP)
+- **The Security Gap Addressed**: Traditional network gateways only inspect packets traversing network interfaces (routers/switches). When a rogue insider or employee inserts a USB thumb drive and copies confidential database backups or encryption keys directly from disk, **that data never touches the network wire**. Network-only firewalls have a 100% blind spot for physical USB theft.
+- **The Solution**: An endpoint-aware telemetry agent (`usb_monitor.py` running on `MANAGER-LAPTOP` / `192.168.1.15`) streams local peripheral events (insertion, drive letters, bytes written, files accessed) into the gateway's detection pipeline.
+- **Detection Algorithm**: Aggregates USB mass storage write bytes within a 30-second sliding window. Triggers when cumulative write volume $\ge 50\text{ MB}$ or unauthorized flash drive attached.
+- **Response**: Network `iptables` cannot stop physical USB transfers. Therefore, the Response Engine synthesizes OS-level endpoint device lockdown commands:
+  - **Windows Registry Command**: `reg add "HKLM\SYSTEM\CurrentControlSet\Services\USBSTOR" /v Start /t REG_DWORD /d 4 /f` (instantly disables the Windows USB Mass Storage driver).
+  - **Linux / Raspberry Pi Kernel Command**: `modprobe -r usb_storage && echo 'blacklist usb-storage' >> /etc/modprobe.d/blacklist.conf` (unloads and blacklists kernel USB storage module).
+  - **Restoration / Unblock**: Setting `Start=3` or removing the modprobe blacklist restores normal authorized access.
 
 ---
 

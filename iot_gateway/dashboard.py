@@ -22,15 +22,29 @@ try:
     from traffic_simulator import TrafficSimulator, DEFAULT_DEVICES
     from detection_engine import DetectionEngine, Alert
     from response_engine import ResponseEngine, ResponseAction
+    from usb_monitor import USBMonitor
 except ImportError:
     from .traffic_simulator import TrafficSimulator, DEFAULT_DEVICES
     from .detection_engine import DetectionEngine, Alert
     from .response_engine import ResponseEngine, ResponseAction
+    from .usb_monitor import USBMonitor
 
 # Initialize Shared Gateway Services
 simulator = TrafficSimulator()
 detection_engine = DetectionEngine()
 response_engine = ResponseEngine(safety_mode=True)
+usb_monitor = USBMonitor(host_name="MANAGER-LAPTOP", host_ip="192.168.1.15")
+
+# Register workstation in devices table so its endpoint status is tracked
+from traffic_simulator import Device
+simulator.devices["192.168.1.15"] = Device(
+    name="Manager Workstation (DLP Endpoint)",
+    ip="192.168.1.15",
+    mac="00:1E:67:AA:23:49",
+    device_type="Workstation / Endpoint Agent",
+    normal_protocols=["HTTPS", "SMB", "USB_DLP"],
+    normal_ports=[443, 445]
+)
 
 app = FastAPI(
     title="IoT Threat Detection & Hardening Gateway",
@@ -222,6 +236,7 @@ async def serve_dashboard():
             <button class="inject-btn" onclick="injectAttack('brute_force')">🔑 Inject 2: Brute-Force Login (8 Failed Auths)</button>
             <button class="inject-btn" onclick="injectAttack('c2_beaconing')">📡 Inject 3: C2 Beaconing (Fixed-interval Low Jitter)</button>
             <button class="inject-btn" onclick="injectAttack('volume_flood')">🌊 Inject 4: Volume Flood (DDoS/Exfil Burst)</button>
+            <button class="inject-btn" style="border-color:#f59e0b" onclick="injectAttack('usb_exfiltration')">💾 Inject 5: USB Exfiltration (85MB DLP Breach)</button>
         </div>
     </div>
 
@@ -489,6 +504,10 @@ async def inject_attack_endpoint(req: AttackRequest):
     elif attack_type == "volume_flood":
         target = req.target_ip or "192.168.1.10"  # Flood the camera
         pkts = simulator.inject_volume_flood(target_ip=target, packet_count=35)
+        injected_count = len(pkts)
+    elif attack_type == "usb_exfiltration":
+        pkts = usb_monitor.simulate_usb_exfiltration(bytes_to_copy=85 * 1024 * 1024, duration_sec=14.5)
+        simulator.packet_buffer.extend(pkts)
         injected_count = len(pkts)
     else:
         return JSONResponse({"status": "error", "message": f"Unknown attack type {attack_type}"}, status_code=400)

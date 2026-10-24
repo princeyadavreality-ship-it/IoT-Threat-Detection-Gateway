@@ -1,6 +1,6 @@
-export type ProtocolType = 'TCP' | 'UDP' | 'HTTP' | 'HTTPS' | 'MQTT' | 'CoAP';
+export type ProtocolType = 'TCP' | 'UDP' | 'HTTP' | 'HTTPS' | 'MQTT' | 'CoAP' | 'USB';
 export type DeviceStatus = 'ONLINE' | 'SUSPECT' | 'QUARANTINED';
-export type AlertCategory = 'PORT_SCAN' | 'BRUTE_FORCE' | 'C2_BEACONING' | 'VOLUME_FLOOD';
+export type AlertCategory = 'PORT_SCAN' | 'BRUTE_FORCE' | 'C2_BEACONING' | 'VOLUME_FLOOD' | 'USB_EXFILTRATION';
 export type SeverityLevel = 'LOW' | 'MEDIUM' | 'HIGH';
 export type ActionType = 'ISOLATE' | 'MONITOR';
 
@@ -77,4 +77,6 @@ export interface DetectionThresholds {
   beaconingWindowSec: number;
   volumeFloodBytes: number;
   volumeFloodWindowSec: number;
+  usbExfiltrationBytes: number;
+  usbExfiltrationWindowSec: number;
 }

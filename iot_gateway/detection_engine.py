@@ -9,6 +9,7 @@ Detects:
 2. Brute-Force Auth: Repeated failed authentication attempts
 3. C2 Beaconing: Machine-like periodic connections characterized by ultra-low jitter
 4. Volume Flood: High data volume surges exceeding legitimate device baselines
+5. USB Exfiltration: Endpoint mass storage data copy exceeding DLP limits (air-gapped theft)
 """
 
 import time
@@ -30,10 +31,10 @@ class Alert:
     """
     alert_id: str
     timestamp: float
-    category: str        # 'PORT_SCAN', 'BRUTE_FORCE', 'C2_BEACONING', 'VOLUME_FLOOD'
+    category: str        # 'PORT_SCAN', 'BRUTE_FORCE', 'C2_BEACONING', 'VOLUME_FLOOD', 'USB_EXFILTRATION'
     severity: str        # 'LOW', 'MEDIUM', 'HIGH'
-    source_ip: str       # Attacker or compromised device IP
-    target_ip: str       # Victim or C2 destination IP
+    source_ip: str       # Attacker, compromised device IP, or endpoint host IP
+    target_ip: str       # Victim, C2 destination IP, or USB peripheral target
     detail: str          # Human-readable explanation of why this was flagged
     evidence: Dict       # Statistical and forensic evidence behind the trigger
 
@@ -63,6 +64,10 @@ class DetectionThresholds:
     VOLUME_FLOOD_BYTES: int = 25000       # >= 25,000 bytes
     VOLUME_FLOOD_WINDOW_SEC: float = 3.0  # within 3.0 seconds
 
+    # 5. USB Exfiltration Thresholds (Endpoint DLP)
+    USB_EXFILTRATION_BYTES: int = 50 * 1024 * 1024  # >= 50 MB mass storage copy
+    USB_EXFILTRATION_WINDOW_SEC: float = 30.0       # within 30.0 seconds
+
 
 class DetectionEngine:
     """
@@ -88,11 +93,12 @@ class DetectionEngine:
         if not packets:
             return new_alerts
 
-        # Run all 4 rule detection pipelines
+        # Run all 5 rule detection pipelines
         new_alerts.extend(self._detect_port_scans(packets))
         new_alerts.extend(self._detect_brute_force(packets))
         new_alerts.extend(self._detect_c2_beaconing(packets))
         new_alerts.extend(self._detect_volume_floods(packets))
+        new_alerts.extend(self._detect_usb_exfiltration(packets))
 
         # Store in historical log
         self.alerts.extend(new_alerts)
@@ -263,6 +269,12 @@ class DetectionEngine:
         )
 
         for pkt in packets:
+            # BUG FIX: Protocol check to avoid cross-contamination.
+            # Volume flood is strictly a NETWORK transport attack (UDP/TCP flood).
+            # Endpoint USB storage writes must not be counted here!
+            if getattr(pkt, 'protocol', '') in ('USB', 'ENDPOINT_DLP', 'STORAGE'):
+                continue
+
             if pkt.timestamp >= window_start:
                 key = (pkt.src_ip, pkt.dst_ip)
                 volume_stats[key]["total_bytes"] += pkt.length
@@ -293,6 +305,59 @@ class DetectionEngine:
                 )
                 self._alert_counter += 1
                 self._record_suppression("VOLUME_FLOOD", src_ip, dst_ip)
+                alerts.append(alert)
+
+        return alerts
+
+    # =========================================================================
+    # RULE 5: USB EXFILTRATION DETECTION (ENDPOINT DLP)
+    # Logic: Endpoint reports USB mass storage write exceeding threshold in window
+    # =========================================================================
+    def _detect_usb_exfiltration(self, packets: List[Packet]) -> List[Alert]:
+        alerts: List[Alert] = []
+        now = time.time()
+        window_start = now - self.thresholds.USB_EXFILTRATION_WINDOW_SEC
+
+        usb_stats: Dict[Tuple[str, str], Dict] = defaultdict(
+            lambda: {"total_bytes": 0, "events": 0, "details": []}
+        )
+
+        for pkt in packets:
+            if getattr(pkt, 'protocol', '') == 'USB' and pkt.timestamp >= window_start:
+                key = (pkt.src_ip, pkt.dst_ip)
+                usb_stats[key]["total_bytes"] += pkt.length
+                usb_stats[key]["events"] += 1
+                if pkt.payload_info:
+                    usb_stats[key]["details"].append(pkt.payload_info)
+
+        for (src_ip, dst_ip), stats in usb_stats.items():
+            if stats["total_bytes"] >= self.thresholds.USB_EXFILTRATION_BYTES:
+                if self._is_suppressed("USB_EXFILTRATION", src_ip, dst_ip):
+                    continue
+
+                mb_copied = round(stats["total_bytes"] / (1024 * 1024), 1)
+                alert = Alert(
+                    alert_id=f"ALT-{self._alert_counter:04d}",
+                    timestamp=now,
+                    category="USB_EXFILTRATION",
+                    severity="HIGH",
+                    source_ip=src_ip,
+                    target_ip=dst_ip,
+                    detail=(
+                        f"Air-gapped data exfiltration detected on endpoint {src_ip}: "
+                        f"{mb_copied} MB copied to mass storage {dst_ip} within "
+                        f"{self.thresholds.USB_EXFILTRATION_WINDOW_SEC}s (DLP threshold exceeded)."
+                    ),
+                    evidence={
+                        "bytes_exfiltrated": stats["total_bytes"],
+                        "megabytes_exfiltrated": mb_copied,
+                        "time_window_sec": self.thresholds.USB_EXFILTRATION_WINDOW_SEC,
+                        "telemetry_events": stats["events"],
+                        "sample_payloads": stats["details"][:4]
+                    }
+                )
+                self._alert_counter += 1
+                self._record_suppression("USB_EXFILTRATION", src_ip, dst_ip)
                 alerts.append(alert)
 
         return alerts

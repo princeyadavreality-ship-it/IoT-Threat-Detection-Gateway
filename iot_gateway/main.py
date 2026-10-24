@@ -18,6 +18,7 @@ import argparse
 from traffic_simulator import TrafficSimulator, DEFAULT_DEVICES
 from detection_engine import DetectionEngine
 from response_engine import ResponseEngine
+from usb_monitor import USBMonitor
 
 
 def run_full_simulation_demo():
@@ -28,15 +29,17 @@ def run_full_simulation_demo():
     3. Brute-force login injection -> detection -> iptables isolation
     4. C2 beaconing injection -> detection -> iptables isolation
     5. Volume flood surge injection -> detection -> iptables isolation
+    6. Air-Gapped USB Data Exfiltration -> endpoint DLP detection -> USBSTOR lockdown
     """
     print("\n" + "="*75)
     print("🛡️  IoT THREAT DETECTION & HARDENING GATEWAY — DEMONSTRATION")
     print("="*75)
-    print("Initializing Gateway Subnet (192.168.1.0/24)...")
+    print("Initializing Gateway Subnet (192.168.1.0/24) + Endpoint Telemetry...")
 
     simulator = TrafficSimulator()
     detection_engine = DetectionEngine()
     response_engine = ResponseEngine(safety_mode=True)
+    usb_monitor = USBMonitor(host_name="MANAGER-LAPTOP", host_ip="192.168.1.15")
 
     print("\n[+] Monitored IoT Devices:")
     for ip, dev in DEFAULT_DEVICES.items():
@@ -118,14 +121,35 @@ def run_full_simulation_demo():
         print(f"   Action Taken: {action.action} | iptables rule:")
         print(f"   >>> {action.iptables_command}")
 
+    # 6. Attack Pattern E: Air-Gapped USB Data Exfiltration
+    print("\n" + "-"*75)
+    print("[PHASE 6] Injecting Attack E: Air-Gapped USB Exfiltration (Endpoint DLP)...")
+    print("Scenario: Rogue insider on MANAGER-LAPTOP (192.168.1.15) copies 85 MB sensitive")
+    print("          databases to unauthorized SanDisk USB drive in 14.5s.")
+    print("Why traditional gateways miss this: Traffic never crosses the network wire!")
+    print("-"*75)
+    usb_pkts = usb_monitor.simulate_usb_exfiltration(bytes_to_copy=85 * 1024 * 1024, duration_sec=14.5)
+    simulator.packet_buffer.extend(usb_pkts)
+    print(f">> Injected {len(usb_pkts)} endpoint USB storage telemetry events (85.0 MB payload).")
+
+    new_alerts = detection_engine.analyze_packets(simulator.packet_buffer)
+    for alt in new_alerts:
+        print(f"\n🚨 DETECTED: [{alt.category}] Severity: {alt.severity}")
+        print(f"   Detail: {alt.detail}")
+        action = response_engine.process_alert(alt)
+        print(f"   Action Taken: {action.action} | Endpoint Lockdown Command:")
+        print(f"   >>> Windows: {action.windows_command}")
+        print(f"   >>> Linux:   {action.iptables_command}")
+
     # Summary
     print("\n" + "="*75)
     print("📊 GATEWAY SUMMARY LEDGER")
     print("="*75)
-    print(f"Total Packets Processed: {len(simulator.packet_buffer)}")
-    print(f"Total Alerts Flagged:    {len(detection_engine.alerts)}")
-    print(f"Active Blocklisted IPs:  {list(response_engine.blocklist)}")
-    print(f"Safety Mode:             {'ON (Safe simulation)' if response_engine.safety_mode else 'OFF (Live execution)'}")
+    print(f"Total Packets/Events Processed: {len(simulator.packet_buffer)}")
+    print(f"Total Alerts Flagged:           {len(detection_engine.alerts)}")
+    print(f"Categories Verified:            5 (Port Scan, Brute-Force, C2, Flood, USB DLP)")
+    print(f"Active Blocklisted Hosts:       {list(response_engine.blocklist)}")
+    print(f"Safety Mode:                    {'ON (Safe simulation)' if response_engine.safety_mode else 'OFF (Live execution)'}")
     print("="*75)
     print("\nTo launch the real-time web dashboard:")
     print("    python main.py --web")

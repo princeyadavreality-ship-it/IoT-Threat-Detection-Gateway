@@ -15,7 +15,8 @@ import {
   CheckCircle2,
   Download,
   Check,
-  ArrowUpRight
+  ArrowUpRight,
+  HardDrive
 } from 'lucide-react';
 import { ThreatAlert, Packet } from '../types';
 import { AlertDetailDrawer } from './AlertDetailDrawer';
@@ -149,6 +150,8 @@ export const AlertsDataTable: React.FC<AlertsDataTableProps> = ({
         return <KeyRound className="w-3.5 h-3.5 text-rose-500" />;
       case 'C2_BEACONING':
         return <Radio className="w-3.5 h-3.5 text-amber-500" />;
+      case 'USB_EXFILTRATION':
+        return <HardDrive className="w-3.5 h-3.5 text-amber-500" />;
       case 'VOLUME_FLOOD':
       default:
         return <Zap className="w-3.5 h-3.5 text-purple-500" />;

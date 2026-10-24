@@ -15,6 +15,7 @@ import { AttackSimulatorDrawer } from './components/AttackSimulatorDrawer';
 import { PythonProjectViewer } from './components/PythonProjectViewer';
 import { VoiceAlertHUD } from './components/VoiceAlertHUD';
 import { MTBITrendAnalysis } from './components/MTBITrendAnalysis';
+import { ThreatHeatmap } from './components/ThreatHeatmap';
 import { INITIAL_DEVICES, DEFAULT_THRESHOLDS, EXTERNAL_ATTACKER_IP, C2_SERVER_IP, getInitialAlerts } from './data/mockData';
 import { IoTDevice, Packet, ThreatAlert, ResponseAction, DetectionThresholds, AlertCategory } from './types';
 import { speechEngine } from './utils/speechNotification';
@@ -300,7 +301,8 @@ export default function App() {
     const floodWindowMs = thresholds.volumeFloodWindowSec * 1000;
     const floodMap = new Map<string, { bytes: number; count: number }>();
     pktsToInspect.forEach((p) => {
-      if (now - p.timestamp <= floodWindowMs) {
+      // Protocol filter: ignore USB/Endpoint DLP writes to prevent cross-contamination
+      if (now - p.timestamp <= floodWindowMs && p.protocol !== 'USB') {
         const key = `${p.srcIp}->${p.dstIp}`;
         const curr = floodMap.get(key) || { bytes: 0, count: 0 };
         floodMap.set(key, { bytes: curr.bytes + p.length, count: curr.count + 1 });
@@ -330,14 +332,61 @@ export default function App() {
       }
     });
 
+    // 5. Air-Gapped USB Data Exfiltration Detection (USB write volume >= threshold in window)
+    const usbWindowMs = (thresholds.usbExfiltrationWindowSec || 30.0) * 1000;
+    const usbMap = new Map<string, { bytes: number; count: number; files: string[]; device: string }>();
+    pktsToInspect.forEach((p) => {
+      if (now - p.timestamp <= usbWindowMs && p.protocol === 'USB') {
+        const key = p.srcIp;
+        const curr = usbMap.get(key) || { bytes: 0, count: 0, files: [], device: 'SanDisk Ultra USB 3.0' };
+        const fileMatch = p.payloadInfo.match(/File: ([\w\-.]+)/);
+        if (fileMatch && !curr.files.includes(fileMatch[1])) {
+          curr.files.push(fileMatch[1]);
+        }
+        usbMap.set(key, { bytes: curr.bytes + p.length, count: curr.count + 1, files: curr.files, device: curr.device });
+      }
+    });
+
+    usbMap.forEach((stat, srcIp) => {
+      const usbThreshold = thresholds.usbExfiltrationBytes || 50 * 1024 * 1024;
+      if (stat.bytes >= usbThreshold && !isSuppressed('USB_EXFILTRATION', srcIp, 'USB_MASS_STORAGE')) {
+        const alertId = `ALT-${String(alertCounterRef.current++).padStart(4, '0')}`;
+        newAlerts.push({
+          id: alertId,
+          timestamp: now,
+          category: 'USB_EXFILTRATION',
+          severity: 'HIGH',
+          sourceIp: srcIp,
+          targetIp: 'USB_MASS_STORAGE (E:)',
+          detail: `Air-Gapped USB Data Exfiltration detected on ${srcIp}: ${(stat.bytes / (1024 * 1024)).toFixed(1)} MB copied to unauthorized ${stat.device} in ${thresholds.usbExfiltrationWindowSec || 30}s without network traversal.`,
+          evidence: {
+            totalBytes: stat.bytes,
+            transferredMB: Number((stat.bytes / (1024 * 1024)).toFixed(2)),
+            filesExfiltrated: stat.files.length > 0 ? stat.files : ['customer_pii_dump_2026.sql.gz', 'tls_private_keys.tar.enc'],
+            usbDevice: stat.device,
+            driveLetter: 'E:\\',
+            detectionMechanism: 'Endpoint DLP Telemetry Agent (usb_monitor.py)',
+          },
+          status: 'ACTIVE',
+        });
+      }
+    });
+
     // Response Engine: Synthesize isolation rules for alerts
     const newlyBlockedIps: string[] = [];
     newAlerts.forEach((alt) => {
       const ipToIsolate = alt.sourceIp;
       newlyBlockedIps.push(ipToIsolate);
 
-      const iptablesRule = `iptables -A FORWARD -s ${ipToIsolate} -j DROP && iptables -A INPUT -s ${ipToIsolate} -j DROP`;
-      const windowsRule = `netsh advfirewall firewall add rule name="IoT_Quarantine_${ipToIsolate}" dir=in action=block remoteip=${ipToIsolate}`;
+      let iptablesRule = `iptables -A FORWARD -s ${ipToIsolate} -j DROP && iptables -A INPUT -s ${ipToIsolate} -j DROP`;
+      let windowsRule = `netsh advfirewall firewall add rule name="IoT_Quarantine_${ipToIsolate}" dir=in action=block remoteip=${ipToIsolate}`;
+      let reason = `Automated policy triggered: ${alt.category} flagged. Dropping ${ipToIsolate} in iptables FORWARD/INPUT chains.`;
+
+      if (alt.category === 'USB_EXFILTRATION') {
+        windowsRule = `reg add "HKLM\\SYSTEM\\CurrentControlSet\\Services\\USBSTOR" /v Start /t REG_DWORD /d 4 /f`;
+        iptablesRule = `modprobe -r usb_storage && echo 'blacklist usb-storage' >> /etc/modprobe.d/blacklist.conf`;
+        reason = `Air-gapped DLP response: Network iptables cannot stop physical USB. Enforced endpoint driver lockdown (USBSTOR Start=4 / modprobe blacklist) on ${ipToIsolate}.`;
+      }
 
       newActions.push({
         id: `ACT-${String(actionCounterRef.current++).padStart(4, '0')}`,
@@ -346,7 +395,7 @@ export default function App() {
         targetIp: ipToIsolate,
         category: alt.category,
         action: 'ISOLATE',
-        reason: `Automated policy triggered: ${alt.category} flagged. Dropping ${ipToIsolate} in iptables FORWARD/INPUT chains.`,
+        reason: reason,
         iptablesCommand: iptablesRule,
         windowsCommand: windowsRule,
         executedLive: !safetyMode,
@@ -458,6 +507,30 @@ export default function App() {
           attackType: 'VOLUME_FLOOD',
         });
       }
+    } else if (category === 'USB_EXFILTRATION') {
+      const files = [
+        { name: 'customer_pii_dump_2026.sql.gz', bytes: 48 * 1024 * 1024 },
+        { name: 'tls_private_keys_backup.tar.enc', bytes: 22 * 1024 * 1024 },
+        { name: 'iot_gateway_firmware_signing.key', bytes: 15 * 1024 * 1024 },
+      ];
+      const hostIp = targetIp || '192.168.1.15';
+      files.forEach((f, idx) => {
+        injectedPackets.push({
+          id: `attack-usb-${now}-${idx}`,
+          timestamp: now + idx * 4500,
+          srcIp: hostIp,
+          dstIp: 'USB_STORAGE_E:',
+          srcPort: 0,
+          dstPort: 0,
+          protocol: 'USB',
+          length: f.bytes,
+          flags: 'DLP_WRITE',
+          authSuccess: null,
+          payloadInfo: `[ENDPOINT DLP] File: ${f.name} -> SanDisk Ultra 3.0 (E:) | ${(f.bytes / (1024 * 1024)).toFixed(1)}MB`,
+          isAttack: true,
+          attackType: 'USB_EXFILTRATION',
+        });
+      });
     }
 
     const updated = [...packets, ...injectedPackets];
@@ -688,6 +761,17 @@ export default function App() {
                 packets={packets}
                 alerts={alerts}
                 packetRate={packetRate}
+                theme={theme}
+              />
+
+              {/* Threat & Activity Heatmap: Grid-Based Frequency Matrix with Anomalous Spikes */}
+              <ThreatHeatmap
+                devices={devices}
+                packets={packets}
+                alerts={alerts}
+                blocklist={blocklist}
+                onToggleIsolate={handleToggleIsolate}
+                onSelectAlertIp={(ip) => handleToggleIsolate(ip)}
                 theme={theme}
               />
 

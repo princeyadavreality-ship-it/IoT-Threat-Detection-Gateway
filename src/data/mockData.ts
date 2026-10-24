@@ -119,6 +119,21 @@ export const INITIAL_DEVICES: IoTDevice[] = [
     bytesTotal: 34100,
     lastSeen: Date.now(),
   },
+  {
+    id: 'manager-01',
+    name: 'Manager Workstation (DLP Agent)',
+    ip: '192.168.1.15',
+    mac: '00:1E:67:AA:23:49',
+    deviceType: 'Workstation / Endpoint',
+    normalDestinations: ['192.168.1.1', '52.14.99.102'],
+    normalPorts: [443, 445],
+    normalProtocols: ['HTTPS', 'TCP', 'USB'],
+    status: 'ONLINE',
+    packetsSent: 154,
+    packetsReceived: 142,
+    bytesTotal: 452000,
+    lastSeen: Date.now(),
+  },
 ];
 
 export const DEFAULT_THRESHOLDS: DetectionThresholds = {
@@ -131,9 +146,45 @@ export const DEFAULT_THRESHOLDS: DetectionThresholds = {
   beaconingWindowSec: 30.0,
   volumeFloodBytes: 25000,
   volumeFloodWindowSec: 3.0,
+  usbExfiltrationBytes: 50 * 1024 * 1024,
+  usbExfiltrationWindowSec: 30.0,
 };
 
 export const PYTHON_CODE_FILES = {
+  'usb_monitor.py': `"""
+USB & Endpoint Activity Monitor for IoT Threat Detection Gateway
+Simulates an endpoint telemetry agent (e.g. on MANAGER-LAPTOP / 192.168.1.15)
+that monitors USB mass storage insertions, file copy volume, and air-gapped exfiltration.
+"""
+import time
+from dataclasses import dataclass, asdict
+from typing import List, Dict
+
+@dataclass
+class USBEvent:
+    timestamp: float
+    host_name: str
+    host_ip: str
+    user: str
+    action: str
+    device_name: str
+    vendor_id: str
+    drive_letter: str
+    bytes_transferred: int
+    files_copied: List[str]
+    duration_sec: float
+    is_authorized: bool
+
+class USBMonitor:
+    def __init__(self, host_name="MANAGER-LAPTOP", host_ip="192.168.1.15"):
+        self.host_name = host_name
+        self.host_ip = host_ip
+        self.event_log = []
+
+    def simulate_usb_exfiltration(self, bytes_to_copy=85 * 1024 * 1024, duration_sec=14.5):
+        # Generates DLP exfiltration packets sent from endpoint agent to gateway
+        ...
+`,
   'traffic_simulator.py': `"""
 Traffic Simulator for IoT Threat Detection & Hardening Gateway
 Simulates normal network traffic for 5 IoT devices and injects 4 attack patterns.

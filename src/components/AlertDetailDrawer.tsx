@@ -18,6 +18,7 @@ import {
   Cpu,
   Lock,
   Download,
+  HardDrive,
 } from 'lucide-react';
 import { ThreatAlert, Packet } from '../types';
 
@@ -145,6 +146,8 @@ export const AlertDetailDrawer: React.FC<AlertDetailDrawerProps> = ({
         return <KeyRound className="w-4 h-4 text-rose-400" />;
       case 'C2_BEACONING':
         return <Radio className="w-4 h-4 text-amber-400" />;
+      case 'USB_EXFILTRATION':
+        return <HardDrive className="w-4 h-4 text-amber-400" />;
       case 'VOLUME_FLOOD':
       default:
         return <Zap className="w-4 h-4 text-purple-400" />;
@@ -159,6 +162,8 @@ export const AlertDetailDrawer: React.FC<AlertDetailDrawerProps> = ({
         return { id: 'T1110.001', name: 'Password Guessing', tactic: 'Credential Access' };
       case 'C2_BEACONING':
         return { id: 'T1071.001', name: 'Web Protocols Command & Control', tactic: 'Command and Control' };
+      case 'USB_EXFILTRATION':
+        return { id: 'T1052.001', name: 'Exfiltration over Physical Medium', tactic: 'Exfiltration' };
       case 'VOLUME_FLOOD':
       default:
         return { id: 'T1498.001', name: 'Direct Network Flood', tactic: 'Impact' };
@@ -606,27 +611,64 @@ export const AlertDetailDrawer: React.FC<AlertDetailDrawerProps> = ({
                 </div>
               </div>
 
-              {/* Linux iptables / nftables Command */}
+              {/* Command Mitigation Box */}
               <div className="space-y-2">
                 <span className="text-xs font-mono font-bold uppercase tracking-wider text-slate-400">
-                  Synthesized Gateway Firewall Command
+                  {alert.category === 'USB_EXFILTRATION' ? 'Synthesized Endpoint Lockdown Command' : 'Synthesized Gateway Firewall Command'}
                 </span>
-                <div
-                  className={`p-3 rounded-lg border font-mono text-xs flex items-center justify-between gap-2 ${
-                    isDark ? 'bg-[#0B0F17] border-[#222E42] text-emerald-400' : 'bg-slate-900 text-emerald-400 border-slate-800'
-                  }`}
-                >
-                  <code className="truncate">
-                    iptables -I FORWARD -s {alert.sourceIp} -j DROP
-                  </code>
-                  <button
-                    onClick={() => copyToClipboard(`iptables -I FORWARD -s ${alert.sourceIp} -j DROP`, 'iptables')}
-                    className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white cursor-pointer shrink-0"
-                    title="Copy command"
+                {alert.category === 'USB_EXFILTRATION' ? (
+                  <div className="space-y-2">
+                    <div
+                      className={`p-3 rounded-lg border font-mono text-xs flex items-center justify-between gap-2 ${
+                        isDark ? 'bg-[#0B0F17] border-[#222E42] text-amber-300' : 'bg-slate-900 text-amber-300 border-slate-800'
+                      }`}
+                    >
+                      <code className="truncate">
+                        reg add "HKLM\SYSTEM\CurrentControlSet\Services\USBSTOR" /v Start /t REG_DWORD /d 4 /f
+                      </code>
+                      <button
+                        onClick={() => copyToClipboard('reg add "HKLM\\SYSTEM\\CurrentControlSet\\Services\\USBSTOR" /v Start /t REG_DWORD /d 4 /f', 'win_usbstor')}
+                        className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white cursor-pointer shrink-0"
+                        title="Copy Windows Registry Command"
+                      >
+                        {copiedField === 'win_usbstor' ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                    <div
+                      className={`p-3 rounded-lg border font-mono text-xs flex items-center justify-between gap-2 ${
+                        isDark ? 'bg-[#0B0F17] border-[#222E42] text-emerald-400' : 'bg-slate-900 text-emerald-400 border-slate-800'
+                      }`}
+                    >
+                      <code className="truncate">
+                        modprobe -r usb_storage && echo 'blacklist usb-storage' &gt;&gt; /etc/modprobe.d/blacklist.conf
+                      </code>
+                      <button
+                        onClick={() => copyToClipboard("modprobe -r usb_storage && echo 'blacklist usb-storage' >> /etc/modprobe.d/blacklist.conf", 'modprobe')}
+                        className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white cursor-pointer shrink-0"
+                        title="Copy Linux Kernel Command"
+                      >
+                        {copiedField === 'modprobe' ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    className={`p-3 rounded-lg border font-mono text-xs flex items-center justify-between gap-2 ${
+                      isDark ? 'bg-[#0B0F17] border-[#222E42] text-emerald-400' : 'bg-slate-900 text-emerald-400 border-slate-800'
+                    }`}
                   >
-                    {copiedField === 'iptables' ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
+                    <code className="truncate">
+                      iptables -I FORWARD -s {alert.sourceIp} -j DROP
+                    </code>
+                    <button
+                      onClick={() => copyToClipboard(`iptables -I FORWARD -s ${alert.sourceIp} -j DROP`, 'iptables')}
+                      className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white cursor-pointer shrink-0"
+                      title="Copy command"
+                    >
+                      {copiedField === 'iptables' ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* SIEM Incident Log Export */}

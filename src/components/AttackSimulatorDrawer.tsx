@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Crosshair, KeyRound, Radio, Zap, Play, ShieldAlert } from 'lucide-react';
+import { X, Crosshair, KeyRound, Radio, Zap, Play, ShieldAlert, HardDrive } from 'lucide-react';
 import { AlertCategory, IoTDevice } from '../types';
 
 interface AttackSimulatorDrawerProps {
@@ -63,7 +63,15 @@ export const AttackSimulatorDrawer: React.FC<AttackSimulatorDrawerProps> = ({
       icon: <Zap className="w-4 h-4 text-purple-500" />,
       desc: 'Sudden bandwidth inundation targeting port 80/443 to saturate IoT device network stack.',
       profile: '35 UDP datagrams (1400B each) = ~49,000 bytes in 0.7s',
-      ruleTrigger: 'Byte sum >= 30,000 in sliding window 3.0s',
+      ruleTrigger: 'Byte sum >= 30,000 in sliding window 3.0s (network transports only)',
+    },
+    {
+      category: 'USB_EXFILTRATION',
+      name: 'Air-Gapped USB Data Exfiltration (DLP)',
+      icon: <HardDrive className="w-4 h-4 text-amber-500" />,
+      desc: 'Rogue insider copying confidential database dumps to unauthorized SanDisk USB storage without network traversal.',
+      profile: '85 MB write transfer across 3 sensitive files in 14.5s',
+      ruleTrigger: 'Endpoint USB write >= 50 MB in 30s -> Windows USBSTOR / Linux modprobe lockdown',
     },
   ];
 
